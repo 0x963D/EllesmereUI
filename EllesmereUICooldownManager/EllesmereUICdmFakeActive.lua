@@ -700,9 +700,7 @@ end
                     end
                 end
                 cd:SetSwipeColor(cr, cg, cb, ca)
-                if rule.allowCustomSpellFrame then
-                    cd:SetReverse(not (ss and ss.reverseSwipe))
-                elseif ss and ss.reverseSwipe then
+                if ss and ss.reverseSwipe then
                     cd:SetReverse(true)
                 end
                 if ns.StyleOverlayCooldownText then
