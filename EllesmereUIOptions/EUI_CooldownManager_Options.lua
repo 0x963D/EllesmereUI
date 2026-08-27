@@ -8591,7 +8591,7 @@ initFrame:SetScript("OnEvent", function(self)
             -- Per-icon settings: CD/utility bars get the full menu; buff-family bars get a
             -- buff-specific subset. custom_buff (Auras) bars excluded here (separate system).
             local isEngineBuffBar = isBuffBar and rmIsInjected and ns.ENGINE_AURA_CUSTOM_SPELLS[rmSpellID]
-            if slotIndex and not isCustomBuff and not isEngineBuffBar then
+            if slotIndex and not isCustomBuff then
                 local sd = ns.GetBarSpellData(barKey)
                 -- Buff bars: the preview slot's own _previewSpellID is authoritative. The
                 -- default buffs bar's preview maps to a MIXED list (Blizzard buffs +
@@ -8637,10 +8637,13 @@ initFrame:SetScript("OnEvent", function(self)
                     local famKey = ns.SettingsFamilyKey(isHostedBuff and "buffs" or barKey)
                     -- Effective-read view: the entry (or a not-yet-persisted fresh table)
                     -- chained to the bar tiers, so the menu shows the values the icon actually renders with; EnsureSS() persists the entry on first WRITE.
-                    local ss = store and store[spellID]
+                    -- The custom-aura strip has one style for the whole bar.
+                    -- Reuse the working text/border cogs, explicitly bar-scoped.
+                    local ss = isEngineBuffBar and bdSel or (store and store[spellID])
                     if not ss then ss = {} end
-                    ns.ChainSettings(ss, isHostedBuff and nil or ns.GetBarTierSettings(sd, barKey))
+                    if not isEngineBuffBar then ns.ChainSettings(ss, isHostedBuff and nil or ns.GetBarTierSettings(sd, barKey)) end
                     local function EnsureSS()
+                        if isEngineBuffBar then return ss end
                         if isEngineAuraBuff and not isBuffBar then menu._piStyleChanged = true end
                         if store and not store[spellID] then
                             store[spellID] = ss
@@ -9685,6 +9688,7 @@ initFrame:SetScript("OnEvent", function(self)
                     -- isDefault: function returning true when the setting is at default value
                     -- onItemCreated: optional callback(si, item, sub) for custom widgets per subnav item
                     local function MakeSubnavRow(label, items, getVal, setVal, isDefault, onItemCreated, opts)
+                        if isEngineBuffBar then return end
                         local row = CreateFrame("Button", nil, inner)
                         row:SetHeight(ITEM_H)
                         row:SetPoint("TOPLEFT", inner, "TOPLEFT", 1, -mH)
@@ -10496,119 +10500,136 @@ initFrame:SetScript("OnEvent", function(self)
                                 function() return ss.hostedMissingVis == nil end)
                         end
 
-                        -- BUFF BAR per-icon menu. "Buff Glow" reuses the glow-style picker but is
-                        -- driven by the while-shown buff-glow path (not proc). nil = inherit the bar's Buff Glow; 0 = None (force the glow off on this one icon).
-                        local BUFF_GLOW_ITEMS = (isEngineAuraBuff and not isBuffBar) and {
-                            -- PI on a CD/utility bar has no bar-level Buff Glow
-                            -- to inherit.  Make the inactive state explicit and
-                            -- match neighboring Active State Glow menus: opt-in.
-                            { val = nil, label = "None" },
-                            { val = 1,   label = "Pixel Glow" },
-                            { val = 3,   label = "Button Glow" },
-                            { val = 4,   label = "Auto-Cast Shine" },
-                            { val = 5,   label = "GCD" },
-                            { val = 6,   label = "Modern WoW Glow" },
-                            { val = 7,   label = "Classic WoW Glow" },
-                        } or {
-                            { val = nil, label = "Default" },
-                            { val = 0,   label = "None" },
-                            { val = 1,   label = "Pixel Glow" },
-                            { val = 2,   label = "Shape Glow" },
-                            { val = 3,   label = "Button Glow" },
-                            { val = 4,   label = "Auto-Cast Shine" },
-                            { val = 5,   label = "GCD" },
-                            { val = 6,   label = "Modern WoW Glow" },
-                            { val = 7,   label = "Classic WoW Glow" },
-                        }
-                        MakeSubnavRow((isEngineAuraBuff and not isBuffBar) and "Active State Glow" or "Buff Glow", BUFF_GLOW_ITEMS,
-                            function()
-                                if isEngineAuraBuff and not isBuffBar and ss.buffGlow == 0 then return nil end
-                                return ss.buffGlow
-                            end,
-                            function(v)
-                                EnsureSS(); SetOwn("buffGlow", v)
-                                if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
-                                    ns.FakeActive_RefreshAuraStyle(spellID)
-                                end
-                            end,
-                            function() return ss.buffGlow == nil end,
-                            nil,
-                            { apply = { keys = { "buffGlow" },
-                                        write = function(t, v) t.buffGlow = v end } })
+                        local function AddBuffGlowRows()
+                            -- BUFF BAR per-icon menu. "Buff Glow" reuses the glow-style picker but is
+                            -- driven by the while-shown buff-glow path (not proc). nil = inherit the bar's Buff Glow; 0 = None (force the glow off on this one icon).
+                            local BUFF_GLOW_ITEMS = (isEngineAuraBuff and not isBuffBar) and {
+                                -- PI on a CD/utility bar has no bar-level Buff Glow
+                                -- to inherit.  Make the inactive state explicit and
+                                -- match neighboring Active State Glow menus: opt-in.
+                                { val = nil, label = "None" },
+                                { val = 1,   label = "Pixel Glow" },
+                                { val = 3,   label = "Button Glow" },
+                                { val = 4,   label = "Auto-Cast Shine" },
+                                { val = 5,   label = "GCD" },
+                                { val = 6,   label = "Modern WoW Glow" },
+                                { val = 7,   label = "Classic WoW Glow" },
+                            } or {
+                                { val = nil, label = "Default" },
+                                { val = 0,   label = "None" },
+                                { val = 1,   label = "Pixel Glow" },
+                                { val = 2,   label = "Shape Glow" },
+                                { val = 3,   label = "Button Glow" },
+                                { val = 4,   label = "Auto-Cast Shine" },
+                                { val = 5,   label = "GCD" },
+                                { val = 6,   label = "Modern WoW Glow" },
+                                { val = 7,   label = "Classic WoW Glow" },
+                            }
+                            MakeSubnavRow((isEngineAuraBuff and not isBuffBar) and "Active State Glow" or "Buff Glow", BUFF_GLOW_ITEMS,
+                                function()
+                                    if isEngineAuraBuff and not isBuffBar and ss.buffGlow == 0 then return nil end
+                                    return ss.buffGlow
+                                end,
+                                function(v)
+                                    EnsureSS(); SetOwn("buffGlow", v)
+                                    if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
+                                        ns.FakeActive_RefreshAuraStyle(spellID)
+                                    end
+                                end,
+                                function() return ss.buffGlow == nil end,
+                                nil,
+                                { apply = { keys = { "buffGlow" },
+                                            write = function(t, v) t.buffGlow = v end } })
 
-                        local BUFF_GLOW_COLOR_ITEMS = {
-                            { val = nil,      label = "Default" },
-                            { val = "class",  label = "Class Color" },
-                            { val = "custom", label = "Custom" },
-                        }
-                        MakeSubnavRow("Glow Effect Color", BUFF_GLOW_COLOR_ITEMS,
-                            function() return ss.buffGlowColor end,
-                            function(v)
-                                EnsureSS()
-                                SetOwn("buffGlowColor", v)
-                                if v == "custom" and not ss.buffGlowColorR then
-                                    ss.buffGlowColorR = 1; ss.buffGlowColorG = 0.776; ss.buffGlowColorB = 0.376
-                                end
-                                if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
-                                    ns.FakeActive_RefreshAuraStyle(spellID)
-                                end
-                            end,
-                            function() return ss.buffGlowColor == nil end,
-                            function(si, item, sub)
-                                if item.val == "custom" then
-                                    local swatchBtn = CreateFrame("Button", nil, si)
-                                    swatchBtn:SetSize(14, 14)
-                                    swatchBtn:SetPoint("RIGHT", si, "RIGHT", -8, 0)
-                                    swatchBtn:SetFrameLevel(si:GetFrameLevel() + 3)
-                                    local swatchTex = swatchBtn:CreateTexture(nil, "ARTWORK")
-                                    swatchTex:SetAllPoints()
-                                    swatchTex:SetColorTexture(ss.buffGlowColorR or 1, ss.buffGlowColorG or 0.776, ss.buffGlowColorB or 0.376, 1)
-                                    swatchBtn:SetScript("OnClick", function()
-                                        EnsureSS()
-                                        ss.buffGlowColor = "custom"
-                                        if not ss.buffGlowColorR then
-                                            ss.buffGlowColorR = 1; ss.buffGlowColorG = 0.776; ss.buffGlowColorB = 0.376
-                                        end
-                                        -- Keep the dropdown AND flyout open (the OnUpdate cpOpen guard
-                                        -- holds them while the picker is up); just re-highlight the now-selected Custom row.
-                                        if sub._refreshSelection then sub._refreshSelection() end
-                                        local snapR, snapG, snapB = ss.buffGlowColorR, ss.buffGlowColorG, ss.buffGlowColorB
-                                        EllesmereUI:ShowColorPicker({
-                                            r = snapR, g = snapG, b = snapB,
-                                            swatchFunc = function()
-                                                local popup = EllesmereUI._colorPickerPopup
-                                                if not popup then return end
-                                                local r, g, b = popup:GetColorRGB()
-                                                ss.buffGlowColorR = r; ss.buffGlowColorG = g; ss.buffGlowColorB = b
-                                                swatchTex:SetColorTexture(r, g, b, 1)
-                                                if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
-                                                    ns.FakeActive_RefreshAuraStyle(spellID)
-                                                end
-                                                if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
-                                            end,
-                                            cancelFunc = function()
-                                                ss.buffGlowColorR = snapR; ss.buffGlowColorG = snapG; ss.buffGlowColorB = snapB
-                                                if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
-                                                    ns.FakeActive_RefreshAuraStyle(spellID)
-                                                end
-                                            end,
-                                        }, swatchBtn)
-                                    end)
-                                end
-                            end,
-                            { apply = { keys = { "buffGlowColor", "buffGlowColorR", "buffGlowColorG", "buffGlowColorB" },
-                                        write = function(t, v)
-                                            t.buffGlowColor = v
-                                            if v == "custom" then
-                                                t.buffGlowColorR = ss.buffGlowColorR or 1
-                                                t.buffGlowColorG = ss.buffGlowColorG or 0.776
-                                                t.buffGlowColorB = ss.buffGlowColorB or 0.376
-                                            else
-                                                t.buffGlowColorR = nil
-                                                t.buffGlowColorG = nil
-                                                t.buffGlowColorB = nil
+                            local BUFF_GLOW_COLOR_ITEMS = {
+                                { val = nil,      label = "Default" },
+                                { val = "class",  label = "Class Color" },
+                                { val = "custom", label = "Custom" },
+                            }
+                            MakeSubnavRow("Glow Effect Color", BUFF_GLOW_COLOR_ITEMS,
+                                function() return ss.buffGlowColor end,
+                                function(v)
+                                    EnsureSS()
+                                    SetOwn("buffGlowColor", v)
+                                    if v == "custom" and not ss.buffGlowColorR then
+                                        ss.buffGlowColorR = 1; ss.buffGlowColorG = 0.776; ss.buffGlowColorB = 0.376
+                                    end
+                                    if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
+                                        ns.FakeActive_RefreshAuraStyle(spellID)
+                                    end
+                                end,
+                                function() return ss.buffGlowColor == nil end,
+                                function(si, item, sub)
+                                    if item.val == "custom" then
+                                        local swatchBtn = CreateFrame("Button", nil, si)
+                                        swatchBtn:SetSize(14, 14)
+                                        swatchBtn:SetPoint("RIGHT", si, "RIGHT", -8, 0)
+                                        swatchBtn:SetFrameLevel(si:GetFrameLevel() + 3)
+                                        local swatchTex = swatchBtn:CreateTexture(nil, "ARTWORK")
+                                        swatchTex:SetAllPoints()
+                                        swatchTex:SetColorTexture(ss.buffGlowColorR or 1, ss.buffGlowColorG or 0.776, ss.buffGlowColorB or 0.376, 1)
+                                        swatchBtn:SetScript("OnClick", function()
+                                            EnsureSS()
+                                            ss.buffGlowColor = "custom"
+                                            if not ss.buffGlowColorR then
+                                                ss.buffGlowColorR = 1; ss.buffGlowColorG = 0.776; ss.buffGlowColorB = 0.376
                                             end
-                                        end } })
+                                            -- Keep the dropdown AND flyout open (the OnUpdate cpOpen guard
+                                            -- holds them while the picker is up); just re-highlight the now-selected Custom row.
+                                            if sub._refreshSelection then sub._refreshSelection() end
+                                            local snapR, snapG, snapB = ss.buffGlowColorR, ss.buffGlowColorG, ss.buffGlowColorB
+                                            EllesmereUI:ShowColorPicker({
+                                                r = snapR, g = snapG, b = snapB,
+                                                swatchFunc = function()
+                                                    local popup = EllesmereUI._colorPickerPopup
+                                                    if not popup then return end
+                                                    local r, g, b = popup:GetColorRGB()
+                                                    ss.buffGlowColorR = r; ss.buffGlowColorG = g; ss.buffGlowColorB = b
+                                                    swatchTex:SetColorTexture(r, g, b, 1)
+                                                    if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
+                                                        ns.FakeActive_RefreshAuraStyle(spellID)
+                                                    end
+                                                    if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
+                                                end,
+                                                cancelFunc = function()
+                                                    ss.buffGlowColorR = snapR; ss.buffGlowColorG = snapG; ss.buffGlowColorB = snapB
+                                                    if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
+                                                        ns.FakeActive_RefreshAuraStyle(spellID)
+                                                    end
+                                                end,
+                                            }, swatchBtn)
+                                        end)
+                                    end
+                                end,
+                                { apply = { keys = { "buffGlowColor", "buffGlowColorR", "buffGlowColorG", "buffGlowColorB" },
+                                            write = function(t, v)
+                                                t.buffGlowColor = v
+                                                if v == "custom" then
+                                                    t.buffGlowColorR = ss.buffGlowColorR or 1
+                                                    t.buffGlowColorG = ss.buffGlowColorG or 0.776
+                                                    t.buffGlowColorB = ss.buffGlowColorB or 0.376
+                                                else
+                                                    t.buffGlowColorR = nil
+                                                    t.buffGlowColorG = nil
+                                                    t.buffGlowColorB = nil
+                                                end
+                                            end } })
+                        end
+                        if not isEngineAuraBuff then AddBuffGlowRows() end
+
+                        if isEngineAuraBuff and not isBuffBar then
+                            -- Same inactive color choices as a buff placeholder. Keep
+                            -- state controls before swipe/glow, as on utility presets.
+                            MakeSubnavRow("Non Active State", {
+                                { val = nil, label = "Default" },
+                                { val = "on", label = "Desaturate" },
+                                { val = "off", label = "Full Color" },
+                            }, function() return ss.desatInactive end,
+                            function(v)
+                                EnsureSS(); SetOwn("desatInactive", v)
+                                if ns.QueueReanchor then ns.QueueReanchor() end
+                            end, function() return ss.desatInactive == nil end)
+                        end
 
                         -- Cooldown Swipe (buffs only): tints the aura-duration swipe. Default =
                         -- the bar's swipe colour; Class/Custom mirror Glow Effect Color; None fully hides the swipe (alpha 0). Applied on the buff frame by the SetSwipeColor hook (which reads these keys).
@@ -10677,6 +10698,8 @@ initFrame:SetScript("OnEvent", function(self)
                                             end
                                         end } })
 
+                        if isEngineAuraBuff and not isBuffBar then AddBuffGlowRows() end
+
                         -- Duration Text + Charge/Stack Size: each row opens a cog popup mirroring
                         -- the bar's control. Per-icon values override the bar; untouched fields inherit (get falls back to bar).
                         local cdmBd = ns.barDataByKey and ns.barDataByKey[barKey]
@@ -10701,7 +10724,8 @@ initFrame:SetScript("OnEvent", function(self)
                             row:SetFrameLevel(menu:GetFrameLevel() + 2)
                             local lbl = row:CreateFontString(nil, "OVERLAY")
                             lbl:SetFont(FONT_PATH, 11, GetCDMOptOutline())
-                            lbl:SetPoint("LEFT", 10, 0); lbl:SetJustifyH("LEFT"); lbl:SetText(EllesmereUI.L(label))
+                            lbl:SetPoint("LEFT", 10, 0); lbl:SetJustifyH("LEFT")
+                            lbl:SetText(isEngineBuffBar and EllesmereUI.Lf("%s (Bar)", EllesmereUI.L(label)) or EllesmereUI.L(label))
                             -- Resting label color: accent when this cog's values differ from the bar, dim when they all match/inherit it.
                             local function UpdateLabel()
                                 if isChanged() then
@@ -10743,9 +10767,13 @@ initFrame:SetScript("OnEvent", function(self)
                                 if menu._openSub and menu._openSub ~= pf and menu._openSub.Hide then menu._openSub:Hide() end
                                 ShowCog()
                                 menu._openSub = pf
+                                if isEngineBuffBar then
+                                    EllesmereUI.ShowWidgetTooltip(row, "Changes the whole bar, including its custom auras.")
+                                end
                             end)
                             row:SetScript("OnLeave", function()
                                 UpdateLabel(); hl:SetAlpha(0)
+                                if isEngineBuffBar then EllesmereUI.HideWidgetTooltip() end
                             end)
                             mH = mH + ITEM_H
                             return row
@@ -10849,7 +10877,7 @@ initFrame:SetScript("OnEvent", function(self)
                                       set=function(v) EnsureSS(); ss.borderSize = v; if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end if row._updateLabel then row._updateLabel() end end },
                                     { type="colorpicker", label="Color",
                                       get=function() return ss.borderR or (cdmBd and cdmBd.borderR) or 0, ss.borderG or (cdmBd and cdmBd.borderG) or 0, ss.borderB or (cdmBd and cdmBd.borderB) or 0 end,
-                                      set=function(r, g, b) EnsureSS(); ss.borderR = r; ss.borderG = g; ss.borderB = b; if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end if row._updateLabel then row._updateLabel() end end },
+                                      set=function(r, g, b) EnsureSS(); ss.borderR = r; ss.borderG = g; ss.borderB = b; if isEngineBuffBar then ss.borderClassColor = false end if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end if row._updateLabel then row._updateLabel() end end },
                                 },
                             })
                         end)
@@ -12093,7 +12121,7 @@ initFrame:SetScript("OnEvent", function(self)
                     -- customSpellIDs tag -- racials/trinkets/presets never show it). At the
                     -- COMMON rejoin point so it appears for custom IDs on any bar type. One-time
                     -- copy of the spell + its per-spell settings onto the SAME bar in the picked specs; specs that already have it anywhere are skipped. Self-contained row (MakeActionRow helpers are out of scope).
-                    if sd.customSpellIDs and sd.customSpellIDs[spellID] then
+                    if not isEngineBuffBar and sd.customSpellIDs and sd.customSpellIDs[spellID] then
                         -- Label flips to Remove once the spell lives on other specs.
                         local otherSpecs = (ns.SpecsWithCustomSpell and ns.SpecsWithCustomSpell(spellID)) or {}
                         local isRemove = next(otherSpecs) ~= nil
@@ -12165,17 +12193,6 @@ initFrame:SetScript("OnEvent", function(self)
                         mH = mH + ITEM_H
                     end
                 end
-            end
-
-            if isEngineBuffBar then
-                local note = inner:CreateFontString(nil, "OVERLAY")
-                note:SetFont(FONT_PATH, 11, GetCDMOptOutline())
-                note:SetPoint("TOPLEFT", inner, "TOPLEFT", 10, -mH - 6)
-                note:SetWidth(menuW - 20)
-                note:SetJustifyH("LEFT")
-                note:SetText(EllesmereUI.L("Uses this bar's aura display settings."))
-                note:SetTextColor(tDimR, tDimG, tDimB, tDimA)
-                mH = mH + note:GetStringHeight() + 12
             end
 
             -- Size and show

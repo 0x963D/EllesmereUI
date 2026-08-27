@@ -26,6 +26,7 @@
 %d / %d Items
 %d Items
 %d junk item(s) could not be sold.
+%s (Bar)
 %s is also assigned to:
 (Applies on Window Close)
 (Applies to All Units)
@@ -708,7 +709,6 @@ Up to
 Update Sync Group
 Use Multiple Thresholds
 Use arrow keys to move selected element 1px any direction
-Uses this bar's aura display settings.
 Value
 View Houses
 Visit

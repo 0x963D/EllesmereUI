@@ -7833,7 +7833,9 @@ local function CollectAndReanchor()
                         -- Lua cannot read PI's protected presence state. Keep the
                         -- base icon in its missing appearance; AuraKit places a
                         -- full-color engine icon over it only while the aura exists.
-                        frame._tex:SetDesaturated(true)
+                        local sdEA = ns.GetBarSpellData(barKey)
+                        local ssEA = ResolveSpellSettings(frame, fcH.spellID, sdEA, barKey)
+                        frame._tex:SetDesaturated(not ssEA or ssEA.desatInactive ~= "off")
                         frame._tex:SetAlpha(1)
                     end
                     -- Hosted "Visibility When Missing: Hidden": the placeholder keeps
