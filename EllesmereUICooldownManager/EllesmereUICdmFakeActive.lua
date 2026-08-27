@@ -680,6 +680,10 @@ end
                 cd:SetHideCountdownNumbers(false)
                 cd:SetSwipeTexture("Interface\\AddOns\\EllesmereUI\\media\\white-square.png")
                 cd:SetFrameLevel(button:GetFrameLevel() + 1)
+                -- Shape setup replaces the swipe texture; apply its color afterward.
+                if ns.ApplyShapeToOverlay and st.srcFrame then
+                    pcall(ns.ApplyShapeToOverlay, st.srcFrame, tex, cd, bd)
+                end
                 local cr, cg, cb, ca = ResolveSwipeColor(ss)
                 if rule.allowCustomSpellFrame then
                     -- Default matches the gold active-state swipe above;
@@ -710,9 +714,6 @@ end
                     -- (its swipe with it), not just the countdown text.
                     local okT, ttB = pcall(ThresholdFor, st.srcFrame, rule, ss)
                     pcall(ns.ApplyThresholdFormatter, cd, okT and ttB or ss)
-                end
-                if ns.ApplyShapeToOverlay and st.srcFrame then
-                    pcall(ns.ApplyShapeToOverlay, st.srcFrame, tex, cd, bd)
                 end
                 -- Duration text: engine-bound cooldowns render NO widget countdown
                 -- (time display belongs to the SetDurationText binding -- the AuraKit
