@@ -1785,7 +1785,7 @@ function ns.HasEngineAuraAssignment(spellID)
         if bd.enabled and not ns.IsBarBuffFamily(bd) and bd.barType ~= "custom_buff" then
             local sd = ns.GetBarSpellData(barKey)
             if sd and sd.hostedBuffSpellIDs and sd.hostedBuffSpellIDs[spellID]
-               and ns.ListHasHostedMarker(sd.assignedSpells or {}, spellID) then
+               and ns.ListHasHostedMarker(sd.assignedSpells, spellID) then
                 return true
             end
         end

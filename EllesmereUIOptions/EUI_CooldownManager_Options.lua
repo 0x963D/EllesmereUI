@@ -7484,7 +7484,7 @@ initFrame:SetScript("OnEvent", function(self)
                     sdPI.customSpellIDs[10060] = true
                     ns.AddTrackedSpell(targetBarKey, 10060)
                     ns.UpdateCustomBuffAuraTracking()
-                    if onChanged then onChanged(10060) end
+                    if onChanged then onChanged() end
                     pi._grayOut()
                 end)
             end
@@ -7741,10 +7741,10 @@ initFrame:SetScript("OnEvent", function(self)
         -- Post-add refresh (picker stays open so several buffs add in a row): onChanged
         -- reanchors live bars and refreshes the preview in place. No RefreshCDPreview here --
         -- its full page rebuild orphans this still-open picker's anchor, so the next click falls onto the rebuilt preview slots and pops the per-icon settings dropdown uninvited.
-        local function AfterAdd(spellID)
+        local function AfterAdd()
             if ns.RebuildSpellRouteMap then ns.RebuildSpellRouteMap() end
             if ns.QueueReanchor then ns.QueueReanchor() end
-            if onChanged then onChanged(spellID) end
+            if onChanged then onChanged() end
         end
 
         -- Custom Spell ID (no duration -- aura-driven).
@@ -7767,7 +7767,7 @@ initFrame:SetScript("OnEvent", function(self)
                 menu:Hide()
                 ShowCustomSpellIDPopup(targetBarKey, false, function(sid)
                     ns.AddBuffToCDUtilBar(targetBarKey, sid)
-                    AfterAdd(sid)
+                    AfterAdd()
                 end, true)
             end)
             mH = mH + ITEM_H
@@ -7822,7 +7822,7 @@ initFrame:SetScript("OnEvent", function(self)
                 else
                     ns.AddBuffToCDUtilBar(targetBarKey, sp.spellID)
                 end
-                AfterAdd(sp.spellID)
+                AfterAdd()
                 -- Gray this row in place; keep the picker open.
                 lbl:SetTextColor(tDimR, tDimG, tDimB, tDimA * 0.4)
                 iconTex:SetDesaturated(true); iconTex:SetAlpha(0.4)
@@ -8644,7 +8644,7 @@ initFrame:SetScript("OnEvent", function(self)
                     if not isEngineBuffBar then ns.ChainSettings(ss, isHostedBuff and nil or ns.GetBarTierSettings(sd, barKey)) end
                     local function EnsureSS()
                         if isEngineBuffBar then return ss end
-                        if isEngineAuraBuff and not isBuffBar then menu._piStyleChanged = true end
+                        if isEngineAuraBuff and not isBuffBar then ns.FakeActive_RefreshAuraStyle(spellID) end
                         if store and not store[spellID] then
                             store[spellID] = ss
                             -- New per-spell entry: retire memoized resolution results so every icon re-resolves against it.
@@ -8656,16 +8656,6 @@ initFrame:SetScript("OnEvent", function(self)
                             end
                         end
                         return ss
-                    end
-                    if isEngineAuraBuff and not isBuffBar then
-                        -- The aura subtree is immutable outside initialization. Apply
-                        -- text/swipe edits when this settings menu closes, just once.
-                        menu:HookScript("OnHide", function()
-                            if menu._piStyleChanged then
-                                ns.FakeActive_RefreshAuraStyle(spellID)
-                                menu._piStyleChanged = nil
-                            end
-                        end)
                     end
                     -- Own-value writer for clearable keys: writing nil would let an inherited
                     -- bar-tier value show through; when that would change the effective value,
@@ -10532,9 +10522,6 @@ initFrame:SetScript("OnEvent", function(self)
                                 end,
                                 function(v)
                                     EnsureSS(); SetOwn("buffGlow", v)
-                                    if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
-                                        ns.FakeActive_RefreshAuraStyle(spellID)
-                                    end
                                 end,
                                 function() return ss.buffGlow == nil end,
                                 nil,
@@ -10553,9 +10540,6 @@ initFrame:SetScript("OnEvent", function(self)
                                     SetOwn("buffGlowColor", v)
                                     if v == "custom" and not ss.buffGlowColorR then
                                         ss.buffGlowColorR = 1; ss.buffGlowColorG = 0.776; ss.buffGlowColorB = 0.376
-                                    end
-                                    if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
-                                        ns.FakeActive_RefreshAuraStyle(spellID)
                                     end
                                 end,
                                 function() return ss.buffGlowColor == nil end,
@@ -14842,13 +14826,8 @@ initFrame:SetScript("OnEvent", function(self)
 
             -- Shared post-add finalization for ALL families (buff + CD/util). Forces an
             -- immediate reanchor so source bars (where the spell got auto-removed from) re-render without waiting for the throttled queue. Then schedules a +0.05s preview refresh.
-            local function FinalizeAdd(addedSpellID)
+            local function FinalizeAdd()
                 if ns.CollectAndReanchor then ns.CollectAndReanchor() end
-                if ns.ENGINE_AURA_CUSTOM_SPELLS
-                   and ns.ENGINE_AURA_CUSTOM_SPELLS[addedSpellID]
-                   and ns.FakeActive_Rearm then
-                    ns.FakeActive_Rearm()
-                end
                 C_Timer.After(0.05, function()
                     if ns.CDMApplyVisibility then ns.CDMApplyVisibility() end
                     if pf.Update then pf:Update() end
@@ -14871,7 +14850,7 @@ initFrame:SetScript("OnEvent", function(self)
                             ns.AddTrackedSpell(bd.key, newSpellID)
                         end
                     end
-                    FinalizeAdd(newSpellID)
+                    FinalizeAdd()
                 end)
             else
                 -- CD/utility bars use ShowSpellPicker.
@@ -14891,7 +14870,7 @@ initFrame:SetScript("OnEvent", function(self)
                 end
                 ShowSpellPicker(self, bd.key, nil, excl, function(newSpellID, isExtra)
                     ns.AddTrackedSpell(bd.key, newSpellID, isExtra)
-                    FinalizeAdd(newSpellID)
+                    FinalizeAdd()
                 end)
             end
         end)
@@ -14937,13 +14916,8 @@ initFrame:SetScript("OnEvent", function(self)
             if not bd then return end
             -- CD/utility bars only (defensive: the button is hidden elsewhere).
             if ns.IsBarBuffFamily(bd) or bd.barType == "custom_buff" then return end
-            ShowBuffToCDPicker(self, bd.key, function(addedSpellID)
+            ShowBuffToCDPicker(self, bd.key, function()
                 if ns.CollectAndReanchor then ns.CollectAndReanchor() end
-                if ns.ENGINE_AURA_CUSTOM_SPELLS
-                   and ns.ENGINE_AURA_CUSTOM_SPELLS[addedSpellID]
-                   and ns.FakeActive_Rearm then
-                    ns.FakeActive_Rearm()
-                end
                 C_Timer.After(0.05, function()
                     if ns.CDMApplyVisibility then ns.CDMApplyVisibility() end
                     if pf.Update then pf:Update() end

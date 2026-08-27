@@ -86,7 +86,6 @@ local FAKE_ACTIVE_RULES = {
         spellID              = 10060,
         trigger              = "aura",
         auraSpellID          = 10060,
-        duration             = 20,
         allowCustomSpellFrame = true,
     },
 }
@@ -470,7 +469,10 @@ ApplyRule = function(rule, win)
             else
                 barScopeOK = BuiltInFrameInScope(rule, f, fc)
             end
-            if barScopeOK and KeyMatches(sid, fc.spellID) then
+            -- The received-buff slot belongs only to its engine aura rule,
+            -- never a cast timer configured for the same spell's cooldown.
+            if barScopeOK and (not f._isEngineAuraFrame or rule.allowCustomSpellFrame)
+               and KeyMatches(sid, fc.spellID) then
                 ApplyToFrame(f, rule, win)
                 if ns._fakeActiveDebug then
                     print(("|cff0cd29fEUI FakeActive|r %s sid=%s"):format(
@@ -680,8 +682,8 @@ end
                 cd:SetFrameLevel(button:GetFrameLevel() + 1)
                 local cr, cg, cb, ca = ResolveSwipeColor(ss)
                 if rule.allowCustomSpellFrame then
-                    -- Use the same Buff-family swipe settings as the menu.
-                    cr, cg, cb, ca = 0, 0, 0, (bd and bd.swipeAlpha) or 0.7
+                    -- Default matches the gold active-state swipe above;
+                    -- the Buff-family menu still supplies color/None overrides.
                     local mode = ss and ss.cdSwipeColor
                     if mode == "class" then
                         local _, ct = UnitClass("player")
@@ -779,8 +781,7 @@ end
                 -- the engine then shows it only while the matching aura exists.
                 -- No stored choice means no glow, matching Active State Glow's
                 -- opt-in behavior on neighboring CD/utility icons.
-                local glowType = ss and ss.buffGlow
-                if glowType == false or glowType == 0 then glowType = nil end
+                local glowType = rule.allowCustomSpellFrame and ss and ss.buffGlow
                 -- CDM orders Shape/Button/Auto-Cast differently from Glows.
                 -- Shape Glow has no engine-driven renderer and is not offered.
                 local engineStyle = ({ [1] = 1, [3] = 2, [4] = 3, [5] = 5, [6] = 6, [7] = 7 })[glowType]
@@ -797,7 +798,6 @@ end
                         th = bd and bd.pixelGlowThickness,
                         period = bd and bd.pixelGlowSpeed,
                     }, srcH)
-                    st.glow = glow
                 end
                 st.btn, st.cd = button, cd
             end,
@@ -820,7 +820,7 @@ end
             st.container:Hide()
         end
         if st.proxy then st.proxy:Hide() end
-        st.container, st.btn, st.cd, st.glow = nil, nil, nil, nil
+        st.container, st.btn, st.cd = nil, nil, nil
         st.built, st.cdLocked, st.fsErr = nil, nil, nil
         st.srcFrame, st.srcCoords = nil, nil
     end
@@ -1386,7 +1386,7 @@ end
 -- active state, and no menu can then show or clear it -- which hid a plainly
 -- tracked spell with nothing to explain why.
 local function IsInjectedFrame(f)
-    return (f._isCustomSpellFrame or f._isRacialFrame or f._isPresetFrame
+    return not f._isEngineAuraFrame and (f._isCustomSpellFrame or f._isRacialFrame or f._isPresetFrame
             or f._isItemPresetFrame or f._isTrinketFrame) and true or false
 end
 ns.CdmIsInjectedFrame = IsInjectedFrame
