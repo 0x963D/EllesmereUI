@@ -80,8 +80,8 @@ local FAKE_ACTIVE_RULES = {
         auraSpellID = 395296,
         duration    = 20,
     },
-    -- Power Infusion. Blizzard exposes no BuffIcon frame for this external
-    -- helpful aura, so EUI supplies the icon and AuraKit supplies its state.
+    -- Received Power Infusion can lack a Blizzard BuffIcon frame.
+    -- EUI supplies a consistent icon and AuraKit supplies its state.
     {
         spellID              = 10060,
         trigger              = "aura",
@@ -429,9 +429,8 @@ end
 
 -- BUILT-IN rules normally target native viewer entries, so they only match
 -- icons on the three native bars. A rule may opt into EUI-owned custom-spell
--- frames when Blizzard supplies no viewer entry. The default guard prevents
--- a stale cached spellID on a
--- Blizzard-pool-reused icon frame matching a custom bar it never belonged to
+-- frames for engine-hosted auras. The default guard prevents a stale cached
+-- spellID on a Blizzard-pool-reused icon matching a custom bar it never belonged to
 -- (field: Ebon Might's built-in overlay painting a custom-bar potion slot
 -- after icon-size/glow adjustments forced frame reuse). USER rules are
 -- deliberately NOT scoped: they are barKey-less by design and follow the
@@ -700,9 +699,7 @@ end
                     end
                 end
                 cd:SetSwipeColor(cr, cg, cb, ca)
-                if ss and ss.reverseSwipe then
-                    cd:SetReverse(true)
-                end
+                if ss and ss.reverseSwipe then cd:SetReverse(true) end
                 if ns.StyleOverlayCooldownText then
                     pcall(ns.StyleOverlayCooldownText, cd, bd, ss, scale)
                 end

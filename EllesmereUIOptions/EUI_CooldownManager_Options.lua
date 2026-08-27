@@ -7832,8 +7832,8 @@ initFrame:SetScript("OnEvent", function(self)
             mH = mH + ITEM_H
             return item
         end
-        -- PI is absent from Blizzard's BuffIcon catalog, but EUI can still track
-        -- it through the protected AuraKit path used by FakeActive.
+        -- PI may be absent from Blizzard's BuffIcon catalog. Track it through
+        -- the protected AuraKit path used by FakeActive on every class.
         if not already[10060] then
             local piInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(10060)
             MakeSpellRow({

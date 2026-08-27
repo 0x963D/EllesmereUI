@@ -1770,7 +1770,7 @@ function ns.RemoveTrackedBuffCdID(barKey, cdID)
     return true
 end
 
--- Some helpful auras never receive a Blizzard BuffIcon frame. They must use an
+-- Some helpful auras lack a Blizzard BuffIcon frame on receiving classes. Use an
 -- EUI-owned icon while AuraKit supplies the protected aura state. Keep this
 -- list narrow: ordinary buffs should continue to use their native viewer frame.
 local ENGINE_AURA_CUSTOM_SPELLS = {
