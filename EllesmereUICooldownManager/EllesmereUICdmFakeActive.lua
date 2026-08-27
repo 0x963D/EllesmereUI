@@ -80,6 +80,15 @@ local FAKE_ACTIVE_RULES = {
         auraSpellID = 395296,
         duration    = 20,
     },
+    -- Power Infusion. Blizzard exposes no BuffIcon frame for this external
+    -- helpful aura, so EUI supplies the icon and AuraKit supplies its state.
+    {
+        spellID              = 10060,
+        trigger              = "aura",
+        auraSpellID          = 10060,
+        duration             = 20,
+        allowCustomSpellFrame = true,
+    },
 }
 
 -- ---------------------------------------------------------------------------
@@ -277,6 +286,22 @@ ResolveSwipeColor = function(ss)
     return cr, cg, cb, ca
 end
 
+-- Engine-aura icons use the Buff-family color keys even though their active
+-- display is supplied by FakeActive.  A nil mode is the normal gold used by
+-- the rest of CDM; the glow itself remains opt-in (buffGlow > 0).
+local function ResolveEngineAuraGlowColor(ss)
+    if not ss then return nil, nil, nil end
+    if ss.buffGlowColor == "class" then
+        local _, ct = UnitClass("player")
+        local cc = ct and RAID_CLASS_COLORS[ct]
+        if cc then return cc.r, cc.g, cc.b end
+    elseif ss.buffGlowColor == "custom" then
+        return ss.buffGlowColorR or 1, ss.buffGlowColorG or 0.776,
+            ss.buffGlowColorB or 0.376
+    end
+    return nil, nil, nil
+end
+
 -- Copy the underlying icon's texture + crop so the overlay looks identical
 -- (works for both Blizzard pool frames .Icon and our preset frames ._tex).
 IconTexture = function(iconFrame, o, rule)
@@ -403,8 +428,10 @@ ApplyToFrame = function(iconFrame, rule, win)
     end
 end
 
--- BUILT-IN rules only ever target native viewer entries, so they only match
--- icons on the three native bars. Guards against a stale cached spellID on a
+-- BUILT-IN rules normally target native viewer entries, so they only match
+-- icons on the three native bars. A rule may opt into EUI-owned custom-spell
+-- frames when Blizzard supplies no viewer entry. The default guard prevents
+-- a stale cached spellID on a
 -- Blizzard-pool-reused icon frame matching a custom bar it never belonged to
 -- (field: Ebon Might's built-in overlay painting a custom-bar potion slot
 -- after icon-size/glow adjustments forced frame reuse). USER rules are
@@ -414,9 +441,18 @@ end
 -- ready-sounds.
 local NATIVE_VIEWER_BARKEYS = { cooldowns = true, utility = true, buffs = true }
 
+local function BuiltInFrameInScope(rule, frame, fc)
+    if not fc then return false end
+    if rule.allowCustomSpellFrame then
+        return frame and frame._isEngineAuraFrame or false
+    end
+    if fc.barKey and NATIVE_VIEWER_BARKEYS[fc.barKey] then return true end
+    return false
+end
+
 -- Apply (or clear) a rule on every matching live icon. A rule with .barKey
 -- only matches icons on that bar; a user rule matches any bar; a built-in
--- rule matches native viewer bars only.
+-- rule matches native viewer bars, plus its explicit custom-frame opt-in.
 ApplyRule = function(rule, win)
     local icons = ns.cdmBarIcons
     local FCt = ns._ecmeFC
@@ -432,7 +468,7 @@ ApplyRule = function(rule, win)
             elseif rule.user then
                 barScopeOK = fc ~= nil
             else
-                barScopeOK = fc and fc.barKey and NATIVE_VIEWER_BARKEYS[fc.barKey]
+                barScopeOK = BuiltInFrameInScope(rule, f, fc)
             end
             if barScopeOK and KeyMatches(sid, fc.spellID) then
                 ApplyToFrame(f, rule, win)
@@ -542,10 +578,6 @@ end
         if st.built or not AK then return end
         AK.styles["cdm:fa121"] = AK.styles["cdm:fa121"]
             or { noRegions = true, width = 1, height = 1 }
-        if not st.proxy then
-            st.proxy = CreateFrame("Frame", nil, UIParent)
-            st.proxy:Hide()
-        end
         -- Resolve the rule's styling NOW (build runs at rearm time, when the
         -- icon usually exists) so the slot cooldown can be styled INSIDE the
         -- creation window. FIELD LESSON (68824): a region handed to an
@@ -560,11 +592,11 @@ end
                     for i = 1, #list do
                         local f = list[i]
                         local fc = f and FCt[f]
-                        -- Native-bars-only, same scope as ApplyRule's built-in
-                        -- arm: this walk only ever runs for built-in engine-slot
-                        -- rules, and a stale cached spellID on a reused custom-
-                        -- bar frame must not donate srcFrame/crop/styling here.
-                        if fc and fc.barKey and NATIVE_VIEWER_BARKEYS[fc.barKey]
+                        -- Same scope as ApplyRule's built-in arm. A stale cached
+                        -- spellID on a reused custom-bar frame must not donate
+                        -- srcFrame/crop/styling unless the rule explicitly owns
+                        -- an EUI custom-spell frame.
+                        if BuiltInFrameInScope(rule, f, fc)
                            and KeyMatches(rule.spellID, fc.spellID) then
                             local barKey = fc.barKey
                             bd = barKey and ns.barDataByKey and ns.barDataByKey[barKey]
@@ -598,6 +630,17 @@ end
         -- everything bakes from real settings. Field-hit as "swipe works, no text" in
         -- sessions where the build outran bar construction.
         if not st.srcFrame then return end
+        if not st.proxy then
+            st.proxy = CreateFrame("Frame", nil, UIParent)
+            st.proxy:Hide()
+        end
+        -- Engine glows snapshot their dimensions while being created.
+        -- Give the proxy the live icon's size before the protected slot
+        -- is initialized; Attach later switches this to SetAllPoints(iconFrame).
+        local srcW, srcH = st.srcFrame:GetWidth(), st.srcFrame:GetHeight()
+        if srcW and srcW > 0 and srcH and srcH > 0 then
+            st.proxy:SetSize(srcW, srcH)
+        end
         local container = AK.CreateContainerShell(st.proxy, { point = { "CENTER" } })
         AK.AddSlotToContainer(container, {
             key = "fa",
@@ -636,8 +679,26 @@ end
                 cd:SetSwipeTexture("Interface\\AddOns\\EllesmereUI\\media\\white-square.png")
                 cd:SetFrameLevel(button:GetFrameLevel() + 1)
                 local cr, cg, cb, ca = ResolveSwipeColor(ss)
+                if rule.allowCustomSpellFrame then
+                    -- Use the same Buff-family swipe settings as the menu.
+                    cr, cg, cb, ca = 0, 0, 0, (bd and bd.swipeAlpha) or 0.7
+                    local mode = ss and ss.cdSwipeColor
+                    if mode == "class" then
+                        local _, ct = UnitClass("player")
+                        local cc = ct and RAID_CLASS_COLORS[ct]
+                        if cc then cr, cg, cb = cc.r, cc.g, cc.b end
+                    elseif mode == "custom" then
+                        cr, cg, cb = ss.cdSwipeColorR or 1, ss.cdSwipeColorG or 0.776, ss.cdSwipeColorB or 0.376
+                    elseif mode == "none" then
+                        ca = 0
+                    end
+                end
                 cd:SetSwipeColor(cr, cg, cb, ca)
-                if ss and ss.reverseSwipe then cd:SetReverse(true) end
+                if rule.allowCustomSpellFrame then
+                    cd:SetReverse(not (ss and ss.reverseSwipe))
+                elseif ss and ss.reverseSwipe then
+                    cd:SetReverse(true)
+                end
                 if ns.StyleOverlayCooldownText then
                     pcall(ns.StyleOverlayCooldownText, cd, bd, ss, scale)
                 end
@@ -712,22 +773,71 @@ end
                 end
                 button:SetIcon(tex)
                 button:SetDurationCooldown(cd)
+                -- Unlike native BuffIcon frames, an engine-aura icon has no
+                -- BuffTicker edge on which Lua can start/stop a glow.  Build
+                -- the selected glow inside the protected aura button instead:
+                -- the engine then shows it only while the matching aura exists.
+                -- No stored choice means no glow, matching Active State Glow's
+                -- opt-in behavior on neighboring CD/utility icons.
+                local glowType = ss and ss.buffGlow
+                if glowType == false or glowType == 0 then glowType = nil end
+                -- CDM orders Shape/Button/Auto-Cast differently from Glows.
+                -- Shape Glow has no engine-driven renderer and is not offered.
+                local engineStyle = ({ [1] = 1, [3] = 2, [4] = 3, [5] = 5, [6] = 6, [7] = 7 })[glowType]
+                local glows = EllesmereUI.Glows
+                if engineStyle and glows and glows.StartEngineGlow then
+                    local glow = CreateFrame("Frame", nil, button)
+                    glow:SetAllPoints(button)
+                    glow:EnableMouse(false)
+                    glow:SetFrameLevel(cd:GetFrameLevel() + 8)
+                    local gr, gg, gb = ResolveEngineAuraGlowColor(ss)
+                    if gr == nil then gr, gg, gb = 1.0, 0.788, 0.137 end
+                    glows.StartEngineGlow(glow, engineStyle, srcW, gr, gg, gb, {
+                        N = bd and bd.pixelGlowLines,
+                        th = bd and bd.pixelGlowThickness,
+                        period = bd and bd.pixelGlowSpeed,
+                    }, srcH)
+                    st.glow = glow
+                end
                 st.btn, st.cd = button, cd
             end,
         })
         AK.FinishContainer(container, "player")
         st.container = container
         st.built = true
+        -- This subtree is styled only in the creation window. Never probe its
+        -- cooldown afterward, even via the legacy best-effort restyle path.
+        if rule.allowCustomSpellFrame then st.cdLocked = true end
+    end
+
+    local function RetireBuild(st)
+        st.buildGen = (st.buildGen or 0) + 1
+        st.queuedGen = nil
+        local AK = EllesmereUI.AuraKit
+        if st.container and AK and AK.ReleaseContainer then
+            AK.ReleaseContainer(st.container)
+        elseif st.container then
+            st.container:Hide()
+        end
+        if st.proxy then st.proxy:Hide() end
+        st.container, st.btn, st.cd, st.glow = nil, nil, nil, nil
+        st.built, st.cdLocked, st.fsErr = nil, nil, nil
+        st.srcFrame, st.srcCoords = nil, nil
     end
 
     local function EnsureBuilt(rule)
         local st = St(rule)
-        if st.built or st.queued then return end
+        local gen = st.buildGen or 0
+        if st.built or st.queuedGen == gen then return end
         local AK = EllesmereUI.AuraKit
         if not (AK and AK.QueueBuildJob) then return end
-        st.queued = true
+        st.queuedGen = gen
         AK.QueueBuildJob(function()
-            st.queued = nil
+            -- A settings edit may retire this generation before its queued job
+            -- runs.  Do not let the stale job replace the newly requested style.
+            if (st.buildGen or 0) ~= gen then return end
+            st.queuedGen = nil
+            if not st.armed then return end
             Build(rule, st)
             -- Rescan ONLY after a build that actually completed (it attaches
             -- the fresh slot to the live icon). A BAILED build (icon not on
@@ -741,6 +851,37 @@ end
             -- finite by design.
             if st.armed and st.built then FA121.Rescan() end
         end, "cdm:fa121-shell")
+    end
+
+    -- Aura-slot regions are engine-owned after their creation callback returns,
+    -- so a glow/color edit cannot restyle them in place.  Retire just the one
+    -- rule's container and rebuild it with the new baked settings.  Debouncing
+    -- keeps color-picker drags from creating a container per mouse event.
+    local styleRefreshTimers = {}
+    function ns.FakeActive_RefreshAuraStyle(spellID)
+        if type(spellID) ~= "number" then return end
+        local old = styleRefreshTimers[spellID]
+        if old and old.Cancel then old:Cancel() end
+        local function RefreshNow()
+            styleRefreshTimers[spellID] = nil
+            for rule, st in pairs(FA121.byRule) do
+                if rule.trigger == "aura" and rule.spellID == spellID then
+                    RetireBuild(st)
+                    if st.armed then EnsureBuilt(rule) end
+                end
+            end
+        end
+        if C_Timer and C_Timer.NewTimer then
+            styleRefreshTimers[spellID] = C_Timer.NewTimer(0.08, RefreshNow)
+        else
+            RefreshNow()
+        end
+    end
+
+    function FA121.InvalidateCustomAuraStyles()
+        for rule, st in pairs(FA121.byRule) do
+            if rule.allowCustomSpellFrame then RetireBuild(st) end
+        end
     end
 
     function FA121.Rescan()
@@ -770,6 +911,7 @@ end
     end
 
     function FA121.Want(rule)
+        if rule.allowCustomSpellFrame and not ns.HasEngineAuraAssignment(rule.spellID) then return end
         local st = St(rule)
         st.armed = true
         EnsureBuilt(rule)
@@ -779,6 +921,7 @@ end
         for rule, st in pairs(FA121.byRule) do
             if not st.armed then
                 ApplyRule(rule, nil)
+                if rule.allowCustomSpellFrame and st.built then RetireBuild(st) end
                 if st.proxy then st.proxy:Hide() end
                 st.o, st.iconFrame = nil, nil
             end
@@ -1589,6 +1732,12 @@ ns.FullCDMRebuild = function(reason)
     -- (talents/spec/settings) -- let the next reanchor reconcile the buff
     -- display order.
     ns._cdmBuffOrderDirty = true
+    -- Protected aura regions bake their appearance at creation. Configuration
+    -- rebuilds must replace them; ordinary combat/catalog rebuilds reuse them.
+    if reason == "apply" or reason == "profile_import" or reason == "talent_reconcile"
+       or reason == "editmode_close" then
+        FA121.InvalidateCustomAuraStyles()
+    end
     if _origFullCDMRebuild then _origFullCDMRebuild(reason) end
     ns.FakeActive_Rearm()
 end

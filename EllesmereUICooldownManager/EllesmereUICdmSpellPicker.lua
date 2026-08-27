@@ -537,6 +537,10 @@ function ns.RemoveSpellFromBar(barKey, spellID)
     -- until the next full rebuild). Signature-gated: a no-op for every
     -- other kind of removal.
     if ns.UpdateCustomBuffAuraTracking then ns.UpdateCustomBuffAuraTracking() end
+    if removed and ns.ENGINE_AURA_CUSTOM_SPELLS and ns.ENGINE_AURA_CUSTOM_SPELLS[hostedSid or removed]
+       and ns.FakeActive_Rearm then
+        ns.FakeActive_Rearm()
+    end
     return removed
 end
 
@@ -1766,6 +1770,29 @@ function ns.RemoveTrackedBuffCdID(barKey, cdID)
     return true
 end
 
+-- Some helpful auras never receive a Blizzard BuffIcon frame. They must use an
+-- EUI-owned icon while AuraKit supplies the protected aura state. Keep this
+-- list narrow: ordinary buffs should continue to use their native viewer frame.
+local ENGINE_AURA_CUSTOM_SPELLS = {
+    [10060] = true, -- Power Infusion
+}
+ns.ENGINE_AURA_CUSTOM_SPELLS = ENGINE_AURA_CUSTOM_SPELLS
+
+-- Read only during a rebuild. Buff-family bars already have their own AuraKit
+-- custom-aura path; only explicitly added CD/utility entries need FakeActive.
+function ns.HasEngineAuraAssignment(spellID)
+    for barKey, bd in pairs(barDataByKey) do
+        if bd.enabled and not ns.IsBarBuffFamily(bd) and bd.barType ~= "custom_buff" then
+            local sd = ns.GetBarSpellData(barKey)
+            if sd and sd.hostedBuffSpellIDs and sd.hostedBuffSpellIDs[spellID]
+               and ns.ListHasHostedMarker(sd.assignedSpells or {}, spellID) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 --- Place a BUFF on a CD/utility bar. HOSTED: RebuildSpellRouteMap diverts its
 --- real Blizzard buff-viewer frame onto this bar; reanchor reparents it into
 --- the layout when active / a placeholder when inactive -- like the buffs bar,
@@ -1797,6 +1824,7 @@ function ns.AddBuffToCDUtilBar(barKey, spellID)
     ns._cdmResGen = (ns._cdmResGen or 0) + 1
     if ns.RebuildSpellRouteMap then ns.RebuildSpellRouteMap() end
     if ns.QueueReanchor then ns.QueueReanchor() end
+    if ENGINE_AURA_CUSTOM_SPELLS[spellID] and ns.FakeActive_Rearm then ns.FakeActive_Rearm() end
     return true
 end
 

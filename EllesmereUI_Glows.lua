@@ -590,6 +590,74 @@ local function StopAutoCastShine(wrapper)
     end
 end
 
+-- Same sparkle texture, spacing and layer speeds as Auto-Cast Shine above,
+-- but all motion is performed by AnimationGroups. Engine aura-button children
+-- cannot be read or repositioned by the Lua driver after their creation window.
+local function StartAnimatedAutoCastShine(wrapper, w, h, cr, cg, cb)
+    w = (w and w > 0) and w or 36
+    h = (h and h > 0) and h or w
+    local perim = 2 * (w + h)
+    local d = wrapper._euiAnimAcData
+    if not d then
+        d = { sparkles = {}, groups = {}, translations = {} }
+        wrapper._euiAnimAcData = d
+    end
+    for idx = 1, 16 do
+        local dot, ag, moves = d.sparkles[idx], d.groups[idx], d.translations[idx]
+        if not dot then
+            dot = wrapper:CreateTexture(nil, "OVERLAY", nil, 7)
+            dot:SetTexture(SHINE_TEX)
+            dot:SetTexCoord(SHINE_COORDS[1], SHINE_COORDS[2], SHINE_COORDS[3], SHINE_COORDS[4])
+            dot:SetDesaturated(true)
+            dot:SetBlendMode("ADD")
+            ag = dot:CreateAnimationGroup()
+            ag:SetLooping("REPEAT")
+            moves = {}
+            -- Starting partway along an edge needs five segments to close the
+            -- orbit. Unused segments have zero duration and no displacement.
+            for order = 1, 5 do
+                local move = ag:CreateAnimation("Translation")
+                move:SetOrder(order)
+                move:SetSmoothing("NONE")
+                moves[order] = move
+            end
+            d.sparkles[idx], d.groups[idx], d.translations[idx] = dot, ag, moves
+        end
+        ag:Stop()
+        local layer = ceil(idx / 4)
+        local dist = ((idx % 4) / 4 + (layer - 1) / 4) % 1 * perim
+        local x, y = _OrbitXY(dist, w, h)
+        dot:ClearAllPoints()
+        dot:SetPoint("CENTER", wrapper, "TOPLEFT", x, y)
+        dot:SetSize(SPARKLE_LAYER_SIZES[layer], SPARKLE_LAYER_SIZES[layer])
+        dot:SetVertexColor(cr or 1, cg or 1, cb or 1, 1)
+        local remaining = perim
+        for order = 1, 5 do
+            local corner = dist < w and w
+                or dist < w + h and w + h
+                or dist < 2 * w + h and 2 * w + h or perim
+            local length = min(corner - dist, remaining)
+            local nx, ny = _OrbitXY(dist + length, w, h)
+            moves[order]:SetOffset(nx - x, ny - y)
+            moves[order]:SetDuration(2 * layer * length / perim)
+            remaining = remaining - length
+            dist = (dist + length) % perim
+            x, y = nx, ny
+        end
+        dot:Show()
+        ag:Play()
+    end
+end
+
+local function StopAnimatedAutoCastShine(wrapper)
+    local d = wrapper._euiAnimAcData
+    if not d then return end
+    for i = 1, #d.sparkles do
+        d.groups[i]:Stop()
+        d.sparkles[i]:Hide()
+    end
+end
+
 -------------------------------------------------------------------------------
 --  Shape Glow Engine
 --  Pulsing additive glow using the icon's shape mask texture.
@@ -788,6 +856,7 @@ local function StopAllGlows(wrapper)
     StopProceduralAnts(wrapper)
     StopButtonGlow(wrapper)
     StopAutoCastShine(wrapper)
+    StopAnimatedAutoCastShine(wrapper)
     StopShapeGlow(wrapper)
     StopFlipBookGlow(wrapper)
     StopAnimatedAnts(wrapper)
@@ -957,9 +1026,9 @@ end
 --  contexts: Pixel Glow renders its GENUINE dash march through the animated
 --  ants engine (not a lookalike remap), Action Button Glow plays its
 --  flipbook twin (the same IconAlertAnts sheet the driver version scrolls),
---  and Auto-Cast Shine / Shape Glow -- no C-side equivalent built -- fall
---  back to the Modern WoW Glow loop (options on engine-hosted pickers hide
---  those two; the fallback only covers stale saved values). FlipBook picks
+--  and Auto-Cast Shine uses native translations for its sparkle orbits.
+--  Shape Glow still falls back to the Modern WoW Glow loop (engine-hosted
+--  pickers hide it; the fallback covers stale saved values). FlipBook picks
 --  pass through untouched. Never registers with the central driver.
 -------------------------------------------------------------------------------
 local function StartEngineGlow(wrapper, styleIdx, szOrW, cr, cg, cb, opts, szH)
@@ -977,9 +1046,16 @@ local function StartEngineGlow(wrapper, styleIdx, szOrW, cr, cg, cb, opts, szH)
         wrapper:SetAlpha(1)
         return
     end
+    if entry.autocast then
+        StopAllGlows(wrapper)
+        StartAnimatedAutoCastShine(wrapper, szOrW, szH or szOrW, cr, cg, cb)
+        wrapper._euiGlowActive = true
+        wrapper:SetAlpha(1)
+        return
+    end
     if entry.buttonGlow then
         styleIdx = 7
-    elseif entry.autocast or entry.shapeGlow then
+    elseif entry.shapeGlow then
         styleIdx = 6
     end
     StartGlow(wrapper, styleIdx, szOrW, cr, cg, cb, opts, szH)

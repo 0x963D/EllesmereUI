@@ -7238,6 +7238,23 @@ local function CollectAndReanchor()
                             -- <= -100, so -sid would otherwise be taken as an itemID and
                             -- fed to GetItemCooldown, which errors outside int32 range
                             -- (cd-claim markers are -(CD_CLAIM_MARKER_BASE + cooldownID)).
+                            local auraSID = ns.HostedBuffMarkerToSpell(sid)
+                            if auraSID and ns.ENGINE_AURA_CUSTOM_SPELLS[auraSID] then
+                                -- A native hosted buff takes priority. A cooldown with
+                                -- the same spell ID is a different, independent slot.
+                                local hasBuff = false
+                                for _, existing in ipairs(frames) do
+                                    local efc = _ecmeFC[existing]
+                                    if efc and efc.isHostedBuff and efc.spellID == auraSID then hasBuff = true; break end
+                                end
+                                if not hasBuff then
+                                    local f = GetOrCreateCustomBuffFrame(barKey, auraSID)
+                                    f._isEngineAuraFrame = true
+                                    frames[#frames + 1] = f
+                                    local fc = FC(f)
+                                    fc.barKey, fc.spellID, fc.isHostedBuff = barKey, auraSID, true
+                                end
+                            end
                         elseif sid and ns.SlotIDFromKey(sid) and _globalClaimSet[sid] then
                             -- Native-first, injection-fallback (the racial rule
                             -- below, applied to equipment): Blizzard's own cooldown
@@ -7812,6 +7829,13 @@ local function CollectAndReanchor()
                     icons[i] = frame
                     if not isFKBar then
                     local fcH = _ecmeFC[frame]
+                    if frame._isEngineAuraFrame and frame._tex and fcH then
+                        -- Lua cannot read PI's protected presence state. Keep the
+                        -- base icon in its missing appearance; AuraKit places a
+                        -- full-color engine icon over it only while the aura exists.
+                        frame._tex:SetDesaturated(true)
+                        frame._tex:SetAlpha(1)
+                    end
                     -- Hosted "Visibility When Missing: Hidden": the placeholder keeps
                     -- its reserved layout slot but renders fully invisible. The flag is
                     -- nil for everyone else (original branch below unchanged).

@@ -7336,7 +7336,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- target. Same model as CD/utility bars: one click, one move.
         local knownSpells = {}
         for _, sp in ipairs(allSpells) do
-            if sp.cdmCatGroup == "buff" then
+            if sp.cdmCatGroup == "buff" and sp.spellID ~= 10060 then
                 knownSpells[#knownSpells + 1] = sp
             end
         end
@@ -7466,6 +7466,28 @@ initFrame:SetScript("OnEvent", function(self)
             csDiv:SetPoint("TOPLEFT", inner, "TOPLEFT", 1, -mH - 4)
             csDiv:SetPoint("TOPRIGHT", inner, "TOPRIGHT", -1, -mH - 4)
             mH = mH + 9
+        end
+
+        -- External PI uses the existing custom-aura strip on buff-family bars.
+        do
+            local info = C_Spell.GetSpellInfo(10060)
+            local pi = MakeSpellRow({ spellID = 10060,
+                name = info and info.name or "Power Infusion",
+                icon = info and info.iconID or 135939 })
+            local sd = ns.GetBarSpellData(targetBarKey)
+            if sd and ns.FindVariantIndexInList(sd.assignedSpells or {}, 10060) then
+                pi._grayOut()
+            else
+                pi:SetScript("OnClick", function()
+                    local sdPI = EnsureAssignedSpells(targetBarKey)
+                    sdPI.customSpellIDs = sdPI.customSpellIDs or {}
+                    sdPI.customSpellIDs[10060] = true
+                    ns.AddTrackedSpell(targetBarKey, 10060)
+                    ns.UpdateCustomBuffAuraTracking()
+                    if onChanged then onChanged(10060) end
+                    pi._grayOut()
+                end)
+            end
         end
 
         -- Preset buffs (potions, consumables, Bloodlust, etc.) added as cast-timer
@@ -7650,9 +7672,9 @@ initFrame:SetScript("OnEvent", function(self)
         menu:Show()
     end
 
-    -- Buff picker targeting a CD/UTILITY bar. A buff placed here is modelled as a
-    -- custom injected spell (always-shown icon) whose Active State is aura-driven:
-    -- ns.AddBuffToCDUtilBar wires the injection + the gold aura overlay together.
+    -- Buff picker targeting a CD/UTILITY bar. EUI places native buffs here by
+    -- hosting Blizzard's frame. Engine-only auras such as PI use
+    -- an EUI-owned icon whose Active State is aura-driven.
     -- Lists the class's CDM-trackable buffs plus a Custom Spell ID entry. No
     -- durations (aura-driven, never cast-timed) and no item/preset rows (those are
     -- cast-timer / CD-utility concepts that do not belong on an aura tracker).
@@ -7694,7 +7716,7 @@ initFrame:SetScript("OnEvent", function(self)
         local alreadyCd = sdCur and ns.CollectCdClaimSet(sdCur)
         local knownSpells = {}
         for _, sp in ipairs(allSpells) do
-            if sp.cdmCatGroup == "buff" and sp.spellID and not already[sp.spellID]
+            if sp.cdmCatGroup == "buff" and sp.spellID and sp.spellID ~= 10060 and not already[sp.spellID]
                and not (sp.cdID and alreadyCd and alreadyCd[sp.cdID]) then
                 knownSpells[#knownSpells + 1] = sp
             end
@@ -7719,10 +7741,10 @@ initFrame:SetScript("OnEvent", function(self)
         -- Post-add refresh (picker stays open so several buffs add in a row): onChanged
         -- reanchors live bars and refreshes the preview in place. No RefreshCDPreview here --
         -- its full page rebuild orphans this still-open picker's anchor, so the next click falls onto the rebuilt preview slots and pops the per-icon settings dropdown uninvited.
-        local function AfterAdd()
+        local function AfterAdd(spellID)
             if ns.RebuildSpellRouteMap then ns.RebuildSpellRouteMap() end
             if ns.QueueReanchor then ns.QueueReanchor() end
-            if onChanged then onChanged() end
+            if onChanged then onChanged(spellID) end
         end
 
         -- Custom Spell ID (no duration -- aura-driven).
@@ -7745,7 +7767,7 @@ initFrame:SetScript("OnEvent", function(self)
                 menu:Hide()
                 ShowCustomSpellIDPopup(targetBarKey, false, function(sid)
                     ns.AddBuffToCDUtilBar(targetBarKey, sid)
-                    AfterAdd()
+                    AfterAdd(sid)
                 end, true)
             end)
             mH = mH + ITEM_H
@@ -7800,7 +7822,7 @@ initFrame:SetScript("OnEvent", function(self)
                 else
                     ns.AddBuffToCDUtilBar(targetBarKey, sp.spellID)
                 end
-                AfterAdd()
+                AfterAdd(sp.spellID)
                 -- Gray this row in place; keep the picker open.
                 lbl:SetTextColor(tDimR, tDimG, tDimB, tDimA * 0.4)
                 iconTex:SetDesaturated(true); iconTex:SetAlpha(0.4)
@@ -7809,6 +7831,23 @@ initFrame:SetScript("OnEvent", function(self)
             end)
             mH = mH + ITEM_H
             return item
+        end
+        -- PI is absent from Blizzard's BuffIcon catalog, but EUI can still track
+        -- it through the protected AuraKit path used by FakeActive.
+        if not already[10060] then
+            local piInfo = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(10060)
+            MakeSpellRow({
+                spellID = 10060,
+                name = piInfo and piInfo.name or "Power Infusion",
+                icon = piInfo and piInfo.iconID or 135939,
+            })
+            -- PI is an EUI engine-aura entry, not a Blizzard CDM buff. Keep it
+            -- visually separate from the native buff catalog below.
+            local piDiv = inner:CreateTexture(nil, "ARTWORK")
+            piDiv:SetHeight(1); piDiv:SetColorTexture(1, 1, 1, 0.10)
+            piDiv:SetPoint("TOPLEFT", inner, "TOPLEFT", 1, -mH - 4)
+            piDiv:SetPoint("TOPRIGHT", inner, "TOPRIGHT", -1, -mH - 4)
+            mH = mH + 9
         end
         for _, sp in ipairs(knownSpells) do MakeSpellRow(sp) end
 
@@ -8551,7 +8590,8 @@ initFrame:SetScript("OnEvent", function(self)
         if removeOnly then
             -- Per-icon settings: CD/utility bars get the full menu; buff-family bars get a
             -- buff-specific subset. custom_buff (Auras) bars excluded here (separate system).
-            if slotIndex and not isCustomBuff then
+            local isEngineBuffBar = isBuffBar and rmIsInjected and ns.ENGINE_AURA_CUSTOM_SPELLS[rmSpellID]
+            if slotIndex and not isCustomBuff and not isEngineBuffBar then
                 local sd = ns.GetBarSpellData(barKey)
                 -- Buff bars: the preview slot's own _previewSpellID is authoritative. The
                 -- default buffs bar's preview maps to a MIXED list (Blizzard buffs +
@@ -8587,6 +8627,8 @@ initFrame:SetScript("OnEvent", function(self)
                                 and ns.ListHasHostedMarker(sd.assignedSpells, spellID)) then
                         isHostedBuff = true
                     end
+                    local isEngineAuraBuff = ns.ENGINE_AURA_CUSTOM_SPELLS[spellID]
+                        and (isHostedBuff or (isBuffBar and sd.customSpellIDs and sd.customSpellIDs[spellID])) or false
                     -- Per-spell entries live in the spec FAMILY store (travel with the spell
                     -- across bars); bar tiers sit below them: sd.barSettings ("Apply to Bar")
                     -- -> bd.barSpellSettings ("Apply to Bar (All Specs)"). A hosted buff uses the BUFF store (same entry as on the buffs bar) and never chains to this bar's cd/util tiers.
@@ -8599,6 +8641,7 @@ initFrame:SetScript("OnEvent", function(self)
                     if not ss then ss = {} end
                     ns.ChainSettings(ss, isHostedBuff and nil or ns.GetBarTierSettings(sd, barKey))
                     local function EnsureSS()
+                        if isEngineAuraBuff and not isBuffBar then menu._piStyleChanged = true end
                         if store and not store[spellID] then
                             store[spellID] = ss
                             -- New per-spell entry: retire memoized resolution results so every icon re-resolves against it.
@@ -8610,6 +8653,16 @@ initFrame:SetScript("OnEvent", function(self)
                             end
                         end
                         return ss
+                    end
+                    if isEngineAuraBuff and not isBuffBar then
+                        -- The aura subtree is immutable outside initialization. Apply
+                        -- text/swipe edits when this settings menu closes, just once.
+                        menu:HookScript("OnHide", function()
+                            if menu._piStyleChanged then
+                                ns.FakeActive_RefreshAuraStyle(spellID)
+                                menu._piStyleChanged = nil
+                            end
+                        end)
                     end
                     -- Own-value writer for clearable keys: writing nil would let an inherited
                     -- bar-tier value show through; when that would change the effective value,
@@ -10423,12 +10476,11 @@ initFrame:SetScript("OnEvent", function(self)
                         -- spellDuration) are show-on-cast only, so the Always Show Buffs/Desaturate Inactive overrides (which act on Blizzard-tracked inactive placeholders) don't apply to them.
                         local isInjectedCustom = (sd.spellDurations and (sd.spellDurations[spellID] or 0) > 0)
                             or (sd.customSpellIDs and sd.customSpellIDs[spellID]) or false
-
                         -- Visibility When Missing (HOSTED buffs only): nil = desaturated
                         -- placeholder; "hidden" keeps the reserved slot but renders nothing;
                         -- "hiddenShift" skips the placeholder so later icons close the gap (same
                         -- outcome as Hidden on CD (Shift Icons)). Purely per-spell: no apply opts, hosted rows never get the Apply-to-Bar strip anyway (entries chain to no tier).
-                        if isHostedBuff then
+                        if isHostedBuff and not isEngineAuraBuff then
                             local MISSING_VIS_ITEMS = {
                                 { val = nil,           label = "Desaturated" },
                                 { val = "hidden",      label = "Hidden" },
@@ -10446,7 +10498,18 @@ initFrame:SetScript("OnEvent", function(self)
 
                         -- BUFF BAR per-icon menu. "Buff Glow" reuses the glow-style picker but is
                         -- driven by the while-shown buff-glow path (not proc). nil = inherit the bar's Buff Glow; 0 = None (force the glow off on this one icon).
-                        local BUFF_GLOW_ITEMS = {
+                        local BUFF_GLOW_ITEMS = (isEngineAuraBuff and not isBuffBar) and {
+                            -- PI on a CD/utility bar has no bar-level Buff Glow
+                            -- to inherit.  Make the inactive state explicit and
+                            -- match neighboring Active State Glow menus: opt-in.
+                            { val = nil, label = "None" },
+                            { val = 1,   label = "Pixel Glow" },
+                            { val = 3,   label = "Button Glow" },
+                            { val = 4,   label = "Auto-Cast Shine" },
+                            { val = 5,   label = "GCD" },
+                            { val = 6,   label = "Modern WoW Glow" },
+                            { val = 7,   label = "Classic WoW Glow" },
+                        } or {
                             { val = nil, label = "Default" },
                             { val = 0,   label = "None" },
                             { val = 1,   label = "Pixel Glow" },
@@ -10457,9 +10520,17 @@ initFrame:SetScript("OnEvent", function(self)
                             { val = 6,   label = "Modern WoW Glow" },
                             { val = 7,   label = "Classic WoW Glow" },
                         }
-                        MakeSubnavRow("Buff Glow", BUFF_GLOW_ITEMS,
-                            function() return ss.buffGlow end,
-                            function(v) EnsureSS(); SetOwn("buffGlow", v) end,
+                        MakeSubnavRow((isEngineAuraBuff and not isBuffBar) and "Active State Glow" or "Buff Glow", BUFF_GLOW_ITEMS,
+                            function()
+                                if isEngineAuraBuff and not isBuffBar and ss.buffGlow == 0 then return nil end
+                                return ss.buffGlow
+                            end,
+                            function(v)
+                                EnsureSS(); SetOwn("buffGlow", v)
+                                if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
+                                    ns.FakeActive_RefreshAuraStyle(spellID)
+                                end
+                            end,
                             function() return ss.buffGlow == nil end,
                             nil,
                             { apply = { keys = { "buffGlow" },
@@ -10477,6 +10548,9 @@ initFrame:SetScript("OnEvent", function(self)
                                 SetOwn("buffGlowColor", v)
                                 if v == "custom" and not ss.buffGlowColorR then
                                     ss.buffGlowColorR = 1; ss.buffGlowColorG = 0.776; ss.buffGlowColorB = 0.376
+                                end
+                                if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
+                                    ns.FakeActive_RefreshAuraStyle(spellID)
                                 end
                             end,
                             function() return ss.buffGlowColor == nil end,
@@ -10507,10 +10581,16 @@ initFrame:SetScript("OnEvent", function(self)
                                                 local r, g, b = popup:GetColorRGB()
                                                 ss.buffGlowColorR = r; ss.buffGlowColorG = g; ss.buffGlowColorB = b
                                                 swatchTex:SetColorTexture(r, g, b, 1)
+                                                if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
+                                                    ns.FakeActive_RefreshAuraStyle(spellID)
+                                                end
                                                 if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
                                             end,
                                             cancelFunc = function()
                                                 ss.buffGlowColorR = snapR; ss.buffGlowColorG = snapG; ss.buffGlowColorB = snapB
+                                                if isEngineAuraBuff and not isBuffBar and ns.FakeActive_RefreshAuraStyle then
+                                                    ns.FakeActive_RefreshAuraStyle(spellID)
+                                                end
                                             end,
                                         }, swatchBtn)
                                     end)
@@ -10613,6 +10693,7 @@ initFrame:SetScript("OnEvent", function(self)
                         -- isChanged: a function returning true when this cog's per-icon values
                         -- DIFFER from the bar; the row label then rests at accent instead of dim (same "this is customized" cue as tri-state rows).
                         local function MakeCogRow(label, isChanged, buildCog)
+                            if isEngineAuraBuff and label == "Charge/Stack Text" then return end
                             local row = CreateFrame("Button", nil, inner)
                             row:SetHeight(ITEM_H)
                             row:SetPoint("TOPLEFT", inner, "TOPLEFT", 1, -mH)
@@ -10813,6 +10894,7 @@ initFrame:SetScript("OnEvent", function(self)
                         -- = silent). Blizzard-tracked buffs fire it via the apply-edge hook
                         -- (EnsureBuffSoundHook -> TriggerAuraAppliedAlert); self-timed preset/custom buffs fire it from the cast-timer gain edge in UpdateCustomBuffBars (CdmHooks) off the SAME stored key.
                         local function AddBuffGainRow()
+                            if isEngineAuraBuff then return end
                             MakeSubnavRow("Audio on Buff Gain", AUDIO_ITEMS,
                                 function() return ss.buffActiveSoundKey or "none" end,
                                 function(v)
@@ -10832,6 +10914,7 @@ initFrame:SetScript("OnEvent", function(self)
                         end
                         -- "Audio on Buff Loss": stored per-icon as ss.buffLostSoundKey.
                         local function AddBuffLossRow()
+                            if isEngineAuraBuff then return end
                             MakeSubnavRow("Audio on Buff Loss", AUDIO_ITEMS,
                                 function() return ss.buffLostSoundKey or "none" end,
                                 function(v)
@@ -10928,10 +11011,10 @@ initFrame:SetScript("OnEvent", function(self)
                                             t.reverseSwipe = v or false
                                         end } })
 
-                        -- Threshold Text (every buff type): decimals/color change on the aura
+                        -- Threshold Text: decimals/color change on the aura
                         -- countdown below the spell's Threshold Seconds. Same per-spell store (ss) +
                         -- engine countdown formatter as cd/utility spells; the engine evaluates it, so secret aura durations format fine.
-                        do
+                        if not isEngineAuraBuff then
                             local acc = {}
                             acc.get = function(k) return ss[k] end
                             acc.set = function(k, v) EnsureSS(); ss[k] = v end
@@ -11966,7 +12049,7 @@ initFrame:SetScript("OnEvent", function(self)
                     -- side re-stamps after every Blizzard icon repaint against the frame's full
                     -- identity set, so it follows every transform. At the COMMON rejoin point
                     -- (both families); skipped for preset/item entries (negative ids -- their settings live in customActiveStates, which nothing reads customIcon from). Popup flow closes the menu, matching Lower Alpha.
-                    if not (type(spellID) == "number" and spellID < 0) then
+                    if not isEngineAuraBuff and not (type(spellID) == "number" and spellID < 0) then
                         local hasCI = type(rawget(ss, "customIcon")) == "number"
                         local ciRow = CreateFrame("Button", nil, inner)
                         ciRow:SetHeight(ITEM_H)
@@ -12082,6 +12165,17 @@ initFrame:SetScript("OnEvent", function(self)
                         mH = mH + ITEM_H
                     end
                 end
+            end
+
+            if isEngineBuffBar then
+                local note = inner:CreateFontString(nil, "OVERLAY")
+                note:SetFont(FONT_PATH, 11, GetCDMOptOutline())
+                note:SetPoint("TOPLEFT", inner, "TOPLEFT", 10, -mH - 6)
+                note:SetWidth(menuW - 20)
+                note:SetJustifyH("LEFT")
+                note:SetText(EllesmereUI.L("Uses this bar's aura display settings."))
+                note:SetTextColor(tDimR, tDimG, tDimB, tDimA)
+                mH = mH + note:GetStringHeight() + 12
             end
 
             -- Size and show
@@ -14731,8 +14825,13 @@ initFrame:SetScript("OnEvent", function(self)
 
             -- Shared post-add finalization for ALL families (buff + CD/util). Forces an
             -- immediate reanchor so source bars (where the spell got auto-removed from) re-render without waiting for the throttled queue. Then schedules a +0.05s preview refresh.
-            local function FinalizeAdd()
+            local function FinalizeAdd(addedSpellID)
                 if ns.CollectAndReanchor then ns.CollectAndReanchor() end
+                if ns.ENGINE_AURA_CUSTOM_SPELLS
+                   and ns.ENGINE_AURA_CUSTOM_SPELLS[addedSpellID]
+                   and ns.FakeActive_Rearm then
+                    ns.FakeActive_Rearm()
+                end
                 C_Timer.After(0.05, function()
                     if ns.CDMApplyVisibility then ns.CDMApplyVisibility() end
                     if pf.Update then pf:Update() end
@@ -14755,7 +14854,7 @@ initFrame:SetScript("OnEvent", function(self)
                             ns.AddTrackedSpell(bd.key, newSpellID)
                         end
                     end
-                    FinalizeAdd()
+                    FinalizeAdd(newSpellID)
                 end)
             else
                 -- CD/utility bars use ShowSpellPicker.
@@ -14775,7 +14874,7 @@ initFrame:SetScript("OnEvent", function(self)
                 end
                 ShowSpellPicker(self, bd.key, nil, excl, function(newSpellID, isExtra)
                     ns.AddTrackedSpell(bd.key, newSpellID, isExtra)
-                    FinalizeAdd()
+                    FinalizeAdd(newSpellID)
                 end)
             end
         end)
@@ -14821,10 +14920,13 @@ initFrame:SetScript("OnEvent", function(self)
             if not bd then return end
             -- CD/utility bars only (defensive: the button is hidden elsewhere).
             if ns.IsBarBuffFamily(bd) or bd.barType == "custom_buff" then return end
-            ShowBuffToCDPicker(self, bd.key, function()
+            ShowBuffToCDPicker(self, bd.key, function(addedSpellID)
                 if ns.CollectAndReanchor then ns.CollectAndReanchor() end
-                -- The buff-mirror walk (10Hz) binds to the freshly-created icon on
-                -- its own next tick; no re-arm needed.
+                if ns.ENGINE_AURA_CUSTOM_SPELLS
+                   and ns.ENGINE_AURA_CUSTOM_SPELLS[addedSpellID]
+                   and ns.FakeActive_Rearm then
+                    ns.FakeActive_Rearm()
+                end
                 C_Timer.After(0.05, function()
                     if ns.CDMApplyVisibility then ns.CDMApplyVisibility() end
                     if pf.Update then pf:Update() end
