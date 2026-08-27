@@ -6238,6 +6238,16 @@ local function CollectAndReanchor()
                         --  BUFF PATH: CategorizeFrame + dedup
                         -------------------------------------------------------
                         local targetBar, displaySID, baseSID = CategorizeFrame(frame, defaultBarKey)
+                        -- An explicit engine-aura tracker owns its hosted slot even
+                        -- when Blizzard supplies a buff frame (e.g. PI on a priest).
+                        -- Do not let that frame or its placeholder replace the tracker.
+                        if targetBar and ns.ENGINE_AURA_CUSTOM_SPELLS[baseSID or displaySID] then
+                            local sd = ns.GetBarSpellData(targetBar)
+                            if sd and ns.ListHasHostedMarker(sd.assignedSpells, baseSID or displaySID) then
+                                frame:SetAlpha(0)
+                                targetBar = nil
+                            end
+                        end
                         if targetBar and displaySID and displaySID > 0 then
                             local barSeen = seenSpell[targetBar]
                             if not barSeen then barSeen = {}; seenSpell[targetBar] = barSeen end
@@ -7240,8 +7250,8 @@ local function CollectAndReanchor()
                             -- (cd-claim markers are -(CD_CLAIM_MARKER_BASE + cooldownID)).
                             local auraSID = ns.HostedBuffMarkerToSpell(sid)
                             if auraSID and ns.ENGINE_AURA_CUSTOM_SPELLS[auraSID] then
-                                -- A native hosted buff takes priority. A cooldown with
-                                -- the same spell ID is a different, independent slot.
+                                -- Inject once per hosted slot. A cooldown with the
+                                -- same spell ID is a different, independent slot.
                                 local hasBuff = false
                                 for _, existing in ipairs(frames) do
                                     local efc = _ecmeFC[existing]
