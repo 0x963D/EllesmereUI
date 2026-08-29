@@ -10713,6 +10713,7 @@ initFrame:SetScript("OnEvent", function(self)
                             local b = cdmBd
                             return valChanged(ss.showItemCount, (b and b.showItemCount) ~= false)
                                 or valChanged(ss.showChargeStackText, (b and b.showChargeStackText) ~= false)
+                                or ss.buffGlowStackThreshold ~= nil
                                 or valChanged(ss.stackCountSize, (b and b.stackCountSize) or 11)
                                 or colChanged(ss.stackCountR, ss.stackCountG, ss.stackCountB,
                                     (b and b.stackCountR) or 1, (b and b.stackCountG) or 1, (b and b.stackCountB) or 1)
@@ -10730,6 +10731,15 @@ initFrame:SetScript("OnEvent", function(self)
                                     { type="toggle", label="Show Charge/Stack Text",
                                       get=function() if ss.showChargeStackText ~= nil then return ss.showChargeStackText end return (cdmBd and cdmBd.showChargeStackText) ~= false end,
                                       set=function(v) EnsureSS(); ss.showChargeStackText = v; if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end if row._updateLabel then row._updateLabel() end end },
+                                    { type="input", label="Glow at Stacks", inputWidth=42, commitOnBlur=true,
+                                      get=function() return tostring(tonumber(ss.buffGlowStackThreshold) or 0) end,
+                                      set=function(v)
+                                          local threshold = math.floor(tonumber(v) or 0)
+                                          if threshold < 2 then threshold = nil end
+                                          EnsureSS(); SetOwn("buffGlowStackThreshold", threshold)
+                                          if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end
+                                          if row._updateLabel then row._updateLabel() end
+                                      end },
                                     { type="slider", label="Size", min=6, max=30, step=1,
                                       get=function() return ss.stackCountSize or (cdmBd and cdmBd.stackCountSize) or 11 end,
                                       set=function(v) EnsureSS(); ss.stackCountSize = v; if ns.RefreshCDMIconAppearance then ns.RefreshCDMIconAppearance(barKey) end if row._updateLabel then row._updateLabel() end end },

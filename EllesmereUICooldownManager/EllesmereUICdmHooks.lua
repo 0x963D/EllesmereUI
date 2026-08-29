@@ -38,6 +38,132 @@ ns._spellOrderDirty = true  -- start dirty so first reanchor builds caches
 local hookFrameData = setmetatable({}, { __mode = "k" })
 ns._hookFrameData = hookFrameData
 
+-- Stack counts may be secret in restricted combat. A one-unit StatusBar range
+-- performs the threshold comparison in C; its fill clips the glow at the edge.
+-- Frames are created only for icons with an enabled per-spell threshold.
+local function StackGlowSize(icon)
+    local width, height = icon:GetWidth(), icon:GetHeight()
+    if not width or width < 5 then width = 36 end
+    if not height or height < 5 then height = width end
+    return width, height
+end
+
+local function StartStackGlow(st, width, height)
+    local opts = {
+        owner = st.icon, width = width, height = height,
+        N = st.lines, th = st.thickness, period = st.speed,
+    }
+    if st.background then
+        opts.bg = { r = st.bgR, g = st.bgG, b = st.bgB }
+    end
+    ns.StartNativeGlow(st.glow, st.style, st.r, st.g, st.b, opts)
+    st.width, st.height = width, height
+    st.started = true
+end
+
+local function StopStackGlow(st)
+    if st.started then
+        ns.StopNativeGlow(st.glow)
+        st.started = nil
+    end
+    if st.gate then st.gate:SetValue(0) end
+end
+
+local function StackGlowOnHide(icon)
+    local fd = hookFrameData[icon]
+    local st = fd and fd.stackGlow
+    if st then StopStackGlow(st) end
+end
+
+function ns.StackGlow_Configure(icon, threshold, style, r, g, b, settings)
+    local fd = icon and hookFrameData[icon]
+    if not fd then return end
+    local st = fd.stackGlow
+    threshold, style = tonumber(threshold), tonumber(style)
+    if not (threshold and threshold >= 2 and style and ns.GLOW_STYLES[style]) then
+        if st and st.threshold then
+            st.threshold = nil
+            StopStackGlow(st)
+            ns._btDirty = true
+            if ns.ArmBuffTicker then ns.ArmBuffTicker() end
+        end
+        return
+    end
+    threshold = floor(threshold)
+    local lines = (settings and settings.buffGlowLines) or 8
+    local thickness = (settings and settings.buffGlowThickness) or 2
+    local speed = (settings and settings.buffGlowSpeed) or 4
+    local background = settings and settings.buffGlowBackground or false
+    local bgR = background and (settings.buffGlowBackgroundR or 0) or nil
+    local bgG = background and (settings.buffGlowBackgroundG or 0) or nil
+    local bgB = background and (settings.buffGlowBackgroundB or 0) or nil
+
+    if not st then
+        st = {}
+        fd.stackGlow = st
+        st.icon = icon
+        st.gate = CreateFrame("StatusBar", nil, icon)
+        st.gate:SetPoint("TOPLEFT", icon, "TOPLEFT", -12, 12)
+        st.gate:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 12, -12)
+        st.gate:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+        st.gate:GetStatusBarTexture():SetAlpha(0)
+
+        st.clip = CreateFrame("Frame", nil, st.gate)
+        st.clip:SetAllPoints(st.gate:GetStatusBarTexture())
+        st.clip:SetClipsChildren(true)
+        st.clip:EnableMouse(false)
+
+        st.glow = CreateFrame("Frame", nil, st.clip)
+        st.glow:SetAllPoints(icon)
+        st.glow:EnableMouse(false)
+        icon:HookScript("OnHide", StackGlowOnHide)
+    end
+
+    st.gate:SetFrameLevel(icon:GetFrameLevel() + 16)
+    st.clip:SetFrameLevel(st.gate:GetFrameLevel() + 1)
+    st.glow:SetFrameLevel(st.clip:GetFrameLevel() + 1)
+    local changed = st.threshold ~= threshold or st.style ~= style
+        or st.r ~= r or st.g ~= g or st.b ~= b or st.lines ~= lines
+        or st.thickness ~= thickness or st.speed ~= speed
+        or st.background ~= background or st.bgR ~= bgR or st.bgG ~= bgG or st.bgB ~= bgB
+    st.threshold, st.style = threshold, style
+    st.r, st.g, st.b = r, g, b
+    st.lines, st.thickness, st.speed = lines, thickness, speed
+    st.background, st.bgR, st.bgG, st.bgB = background, bgR, bgG, bgB
+    if changed then
+        StopStackGlow(st)
+        st.gate:SetMinMaxValues(threshold - 1, threshold)
+    end
+    ns._btDirty = true
+    if ns.ArmBuffTicker then ns.ArmBuffTicker() end
+end
+
+function ns.StackGlow_Feed(icon, applications, active)
+    local fd = icon and hookFrameData[icon]
+    local st = fd and fd.stackGlow
+    if not (st and st.threshold) then return end
+    if not active then
+        StopStackGlow(st)
+        return
+    end
+    local secret = issecretvalue and issecretvalue(applications)
+    if not secret then
+        if applications == nil then
+            applications = st.threshold
+        elseif applications < st.threshold then
+            StopStackGlow(st)
+            st.gate:SetValue(applications)
+            return
+        end
+    end
+    local width, height = StackGlowSize(icon)
+    if not st.started or math.abs(width - st.width) > 0.01
+       or math.abs(height - st.height) > 0.01 then
+        StartStackGlow(st, width, height)
+    end
+    st.gate:SetValue(applications)
+end
+
 -- Force active buff glows to re-apply on the next buff tick (<=0.1s): the tick
 -- only (re)starts a glow when fd.buffGlowActive is false, so live option edits
 -- (color, pixel Lines/Thickness/Speed) never reach an already-glowing icon.
@@ -9434,6 +9560,25 @@ function ns.SetupViewerHooks()
     do
         local cdmBuffTickFrame = ns.TakeShell()
         local _, _cachedClassToken = UnitClass("player")
+        local function ReadBuffApplications(frame)
+            local ad = frame and frame.auraDataCached
+            local applications = ad and ad.applications
+            if (issecretvalue and issecretvalue(applications)) or applications ~= nil then
+                return applications
+            end
+            local auraInstID = frame and frame.auraInstanceID
+            local auraUnit = frame and frame.auraDataUnit
+            if auraInstID and auraUnit
+               and not (issecretvalue and issecretvalue(auraInstID)) then
+                local ok, data = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID,
+                    auraUnit, auraInstID)
+                applications = ok and data and data.applications
+                if (issecretvalue and issecretvalue(applications)) or applications ~= nil then
+                    return applications
+                end
+            end
+            return nil
+        end
         -- 10 Hz anim ticker: the C engine fires the body at cadence and
         -- sleeps between fires, replacing a per-frame OnUpdate whose
         -- accumulator check ran at frame rate (~200x/sec) just to gate this
@@ -9545,8 +9690,15 @@ function ns.SetupViewerHooks()
                                 -- Buff glow shows on active buffs. isActiveBuff above
                                 -- already counts shown totems and our preset/custom
                                 -- own-frames as active, so this just reads it.
-                                local glowActive = isActiveBuff
+                                local buffPresent = isActiveBuff
                                     or (bd.barType == "custom_buff" and frame:IsShown())
+                                local glowActive = buffPresent
+                                if fd and fd._bgThreshold then
+                                    glowActive = false
+                                    local applications = 0
+                                    if buffPresent then applications = ReadBuffApplications(frame) end
+                                    ns.StackGlow_Feed(frame, applications, buffPresent)
+                                end
                                 -- Effective Buff Glow = per-icon override (fd._bgT,
                                 -- stashed by RefreshCDMIconAppearance) falling back to
                                 -- the bar's Buff Glow. nil override => inherit; 0 => None.

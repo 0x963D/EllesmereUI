@@ -2346,9 +2346,12 @@ StartNativeGlow = function(overlay, style, cr, cg, cb, opts)
 
     _G_Glows.StopAllGlows(overlay)
 
-    local parent = overlay:GetParent()
+    -- A clipped wrapper's parent is only the visible fill. Threshold glows pass
+    -- the owning icon and its full size so every style matches the normal path.
+    local parent = (opts and opts.owner) or overlay:GetParent()
     if not parent then return end
-    local pW, pH = parent:GetWidth(), parent:GetHeight()
+    local pW = (opts and opts.width) or parent:GetWidth()
+    local pH = (opts and opts.height) or parent:GetHeight()
     if pW < 5 then pW = 36 end
     if pH < 5 then pH = 36 end
     local noColor = (cr == nil)
@@ -5415,14 +5418,22 @@ local function RefreshCDMIconAppearance(barKey)
             -- render-equivalent to nil: treat it as inherit, never as a value. Without this fd._bgT would be `false` and the BuffTicker's `effGlowType > 0` compares a boolean with a number and errors.
             if nT == false then nT = nil end
             local nColor = ssb and ssb.buffGlowColor  -- nil / "class" / "custom"
+            local nThreshold = tonumber(ssb and ssb.buffGlowStackThreshold)
+            if not nThreshold or nThreshold < 2 then nThreshold = nil end
+            -- Own custom frames do not expose a native applications count.
+            if icon._isCustomBuffFrame or not ns.StackGlow_Configure then
+                nThreshold = nil
+            end
             local nR, nG, nB
             if nColor == "custom" and ssb then
                 nR, nG, nB = ssb.buffGlowColorR, ssb.buffGlowColorG, ssb.buffGlowColorB
             end
             if fd then
                 if fd._bgT ~= nT or fd._bgColor ~= nColor
-                   or fd._bgR ~= nR or fd._bgG ~= nG or fd._bgB ~= nB then
+                   or fd._bgR ~= nR or fd._bgG ~= nG or fd._bgB ~= nB
+                   or fd._bgThreshold ~= nThreshold then
                     fd._bgT = nT; fd._bgColor = nColor; fd._bgR = nR; fd._bgG = nG; fd._bgB = nB
+                    fd._bgThreshold = nThreshold
                     if fd.buffGlowActive and fd.buffGlowOverlay then
                         StopNativeGlow(fd.buffGlowOverlay)
                         fd.buffGlowActive = false
@@ -5430,7 +5441,32 @@ local function RefreshCDMIconAppearance(barKey)
                 end
                 -- Per-icon Desaturate Inactive override, read by the BuffTicker.
                 fd._desatOverride = (ssb and ssb.desatInactive) or nil
+
+                if nThreshold then
+                    local sgStyle = nT
+                    if sgStyle == nil and (barData.barType == "buffs"
+                       or barData.barType == "custom_buff" or barData.key == "buffs") then
+                        sgStyle = barData.buffGlowType or 0
+                    end
+                    local sgMode = nColor or barData.buffGlowMode
+                    local sgR, sgG, sgB
+                    if sgMode == "class" then
+                        local cc = EllesmereUI.GetClassColor(EllesmereUI._playerClass)
+                        sgR, sgG, sgB = cc.r, cc.g, cc.b
+                    elseif nColor == "custom" then
+                        sgR, sgG, sgB = nR, nG, nB
+                    elseif sgMode == "custom" then
+                        sgR, sgG, sgB = barData.buffGlowR, barData.buffGlowG, barData.buffGlowB
+                    end
+                    ns.StackGlow_Configure(icon, nThreshold, sgStyle, sgR, sgG, sgB, barData)
+                elseif fd.stackGlow then
+                    ns.StackGlow_Configure(icon)
+                end
             end
+        elseif fd and fd.stackGlow and ns.StackGlow_Configure then
+            -- Blizzard viewer frames are pooled across cooldown and buff
+            -- families. Retire a controller when its frame becomes non-buff.
+            ns.StackGlow_Configure(icon)
         end
         -- Update texture -- fill the entire frame. The border renders on top via PP.CreateBorder so no inset is needed.
         if tex then
